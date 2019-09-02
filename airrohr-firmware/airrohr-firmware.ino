@@ -307,6 +307,19 @@ ESP8266WebServer server(80);
 int TimeZone = 1;
 
 /*****************************************************************
+ * Function prototypes (to make it cpp compatible in VS Code)
+ *****************************************************************/
+String Float2String(const double value);
+String Float2String(const double value, uint8_t digits);
+void writeConfig();
+String add_sensor_type(const String& sensor_text);
+void webserver_not_found();
+void deepSleep(uint32_t us);
+static bool acquireNetworkTime();
+static void autoUpdate();
+
+
+/*****************************************************************
  * Display definitions                                           *
  *****************************************************************/
 SSD1306 display(0x3c, I2C_PIN_SDA, I2C_PIN_SCL);
@@ -2148,6 +2161,7 @@ void connectWifi() {
 
 			if (WiFi.status() != WL_CONNECTED) {
 				deepSleep(60*1000*1000);
+			}
 		}
 	}
 	debug_out(F("WiFi connected\nIP address: "), DEBUG_MIN_INFO, 0);
