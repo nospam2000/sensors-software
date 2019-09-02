@@ -1,5 +1,15 @@
 #include <Arduino.h>
 #define INTL_DE
+#define POWERSAVE
+// TODO: add brownout detection to protect LiIon battery
+// for LOLIN D32 PRO board: batteryVoltage = analogRead(35) / 4096.0 * 7.445;
+/*
+see also https://www.esp32.com/viewtopic.php?t=2462
+
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+*/
 
 /************************************************************************
  *                                                                      *
@@ -2135,10 +2145,35 @@ void connectWifi() {
 		if (WiFi.status() != WL_CONNECTED) {
 			waitForWifiToConnect(20);
 			debug_out("", DEBUG_MIN_INFO, 1);
+
+			if (WiFi.status() != WL_CONNECTED) {
+				deepSleep(60*1000*1000);
 		}
 	}
 	debug_out(F("WiFi connected\nIP address: "), DEBUG_MIN_INFO, 0);
 	debug_out(WiFi.localIP().toString(), DEBUG_MIN_INFO, 1);
+}
+
+void setup_network() {
+  static bool networkInitialized = false;
+
+  if(networkInitialized)
+    return;
+  
+  display_debug(F("Connecting to"), String(cfg::wlanssid));
+  connectWifi();
+  got_ntp = acquireNetworkTime();
+  debug_out(F("\nNTP time "), DEBUG_MIN_INFO, 0);
+  debug_out(String(got_ntp?"":"not ")+F("received"), DEBUG_MIN_INFO, 1);
+  autoUpdate();
+
+	String server_name = F("Feinstaubsensor-");
+	server_name += esp_chipid;
+  if (MDNS.begin(server_name.c_str())) {
+    MDNS.addService("http", "tcp", 80);
+  }
+
+  networkInitialized = true;
 }
 
 /*****************************************************************
@@ -2147,6 +2182,7 @@ void connectWifi() {
 void sendData(const String& data, const int pin, const char* host, const int httpPort, const char* url, const bool verify, const char* basic_auth_string, const String& contentType) {
 //#include "ca-root.h"
 
+	setup_network();
 	debug_out(F("Start connecting to "), DEBUG_MIN_INFO, 0);
 	debug_out(host, DEBUG_MIN_INFO, 1);
 
@@ -3713,12 +3749,7 @@ void setup() {
 	init_display();
 	init_lcd();
 	setup_webserver();
-	display_debug(F("Connecting to"), String(cfg::wlanssid));
-	connectWifi();
-	got_ntp = acquireNetworkTime();
-	debug_out(F("\nNTP time "), DEBUG_MIN_INFO, 0);
-	debug_out(String(got_ntp?"":"not ")+F("received"), DEBUG_MIN_INFO, 1);
-	autoUpdate();
+
 	create_basic_auth_strings();
 	serialSDS.begin(9600);
 	debug_out(F("\nChipId: "), DEBUG_MIN_INFO, 0);
@@ -3735,11 +3766,9 @@ void setup() {
 	logEnabledAPIs();
 	logEnabledDisplays();
 
-	String server_name = F("Feinstaubsensor-");
-	server_name += esp_chipid;
-	if (MDNS.begin(server_name.c_str())) {
-		MDNS.addService("http", "tcp", 80);
-	}
+#if !defined(POWERSAVE)
+	setup_network();
+#endif
 
 	delay(50);
 
@@ -4052,6 +4081,7 @@ void loop() {
 		}
 		data += "]}";
 
+		setup_network();
 		sum_send_time += sendDataToOptionalApis(data);
 
 		server.begin();
@@ -4066,6 +4096,7 @@ void loop() {
 		debug_out(F("Time for sending data (ms): "), DEBUG_MIN_INFO, 0);
 		debug_out(String(sending_time), DEBUG_MIN_INFO, 1);
 
+		deepSleep(cfg::sending_intervall_ms * 1000);
 
 		// reconnect to WiFi if disconnected
 		if (WiFi.status() != WL_CONNECTED) {
@@ -4090,4 +4121,19 @@ void loop() {
 	}
 	yield();
 //	if (sample_count % 500 == 0) { Serial.println(ESP.getFreeHeap(),DEC); }
+}
+
+void deepSleep(uint32_t us) {
+#if defined(POWERSAVE)
+	if (cfg::sds_read)
+		SDS_cmd(PmSensorCmd::Stop);
+
+	if (cfg::pms_read)
+		PMS_cmd(PmSensorCmd::Stop);
+
+	if (cfg::hpm_read)
+		HPM_cmd(PmSensorCmd::Stop);
+	
+	ESP.deepSleep(us);
+#endif
 }
