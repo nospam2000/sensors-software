@@ -6,6 +6,11 @@
 /*
 see also https://www.esp32.com/viewtopic.php?t=2462
 
+// TODO: use wifi_status_led_uninstall() to disable status led
+
+// TODO: use system_get_rtc_time() after deep sleep to get a time reference
+// when using deep sleep?
+
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
@@ -287,6 +292,20 @@ namespace cfg {
 #define UPDATE_PORT 80
 
 #define JSON_BUFFER_SIZE 2000
+
+#if ARDUINOJSON_VERSION_MAJOR >= 6
+	typedef StaticJsonDocument<JSON_BUFFER_SIZE> MyJsonBuffer;
+	typedef JsonObject MyJsonObjectRef;
+	#define JSON_DERIALIZE(input, output, error) MyJsonBuffer output; bool error = (deserializeJson(output, input) != DeserializationError::Ok);
+	#define JSON_PRINTTO(obj, str) serializeJson(obj, str);
+	#define JSON_CONTAINSKEY(obj, key) obj.containsKey(key) 
+#else	
+	typedef StaticJsonBuffer<JSON_BUFFER_SIZE> MyJsonBuffer;
+	typedef JsonObject& MyJsonObjectRef;
+	#define JSON_DERIALIZE(input, output, error) MyJsonBuffer jsonBuffer; MyJsonObjectRef output = jsonBuffer.parseObject(input); bool error = output.success();
+	#define JSON_PRINTTO(obj, str) obj.printTo(str);
+	#define JSON_CONTAINSKEY(obj, key) obj.containsKey(key) 
+#endif
 
 enum class PmSensorCmd {
 	Start,
@@ -2160,7 +2179,7 @@ void connectWifi() {
 			debug_out("", DEBUG_MIN_INFO, 1);
 
 			if (WiFi.status() != WL_CONNECTED) {
-				deepSleep(60*1000*1000);
+				deepSleep(60*1000*1000); // TODO use higher value and different strategy
 			}
 		}
 	}
@@ -2169,25 +2188,25 @@ void connectWifi() {
 }
 
 void setup_network() {
-  static bool networkInitialized = false;
+	static bool networkInitialized = false;
 
-  if(networkInitialized)
-    return;
+	if(networkInitialized)
+		return;
   
-  display_debug(F("Connecting to"), String(cfg::wlanssid));
-  connectWifi();
-  got_ntp = acquireNetworkTime();
-  debug_out(F("\nNTP time "), DEBUG_MIN_INFO, 0);
-  debug_out(String(got_ntp?"":"not ")+F("received"), DEBUG_MIN_INFO, 1);
-  autoUpdate();
+	display_debug(F("Connecting to"), String(cfg::wlanssid));
+	connectWifi();
+	got_ntp = acquireNetworkTime();
+	debug_out(F("\nNTP time "), DEBUG_MIN_INFO, 0);
+	debug_out(String(got_ntp?"":"not ")+F("received"), DEBUG_MIN_INFO, 1);
+	autoUpdate();
 
 	String server_name = F("Feinstaubsensor-");
 	server_name += esp_chipid;
-  if (MDNS.begin(server_name.c_str())) {
-    MDNS.addService("http", "tcp", 80);
-  }
+	if (MDNS.begin(server_name.c_str())) {
+		MDNS.addService("http", "tcp", 80);
+	}
 
-  networkInitialized = true;
+	networkInitialized = true;
 }
 
 /*****************************************************************
@@ -4147,7 +4166,15 @@ void deepSleep(uint32_t us) {
 
 	if (cfg::hpm_read)
 		HPM_cmd(PmSensorCmd::Stop);
-	
-	ESP.deepSleep(us);
+
+	wdt_disable();
+
+#if 1
+	ESP.deepSleep(us, RF_DISABLED); // TODO which mode is appropriate?
+#else
+	WiFi.mode(WIFI_OFF);
+	WiFi.forceSleepBegin(us);
+#endif
+	yield(); // Needed at least for WiFi.forceSleepBegin()
 #endif
 }
