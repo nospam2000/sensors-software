@@ -4269,7 +4269,7 @@ static bool acquireNetworkTime() {
 /*****************************************************************
  * The Setup                                                     *
  *****************************************************************/
-void setup() {
+extern "C" void setup() {
 	Serial.begin(9600);					// Output to Serial at 9600 baud
 
 #if defined(ESP32)
@@ -4413,7 +4413,7 @@ static unsigned long sendDataToOptionalApis(const String &data) {
 /*****************************************************************
  * And action                                                    *
  *****************************************************************/
-void loop() {
+extern "C" void loop() {
 	String result_PPD = "";
 	String result_SDS = "";
 	String result_PMS = "";
