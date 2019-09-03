@@ -605,6 +605,7 @@ bool first_cycle = true;
 bool sntp_time_is_set = false;
 
 bool got_ntp = false;
+bool networkInitialized = false;
 
 unsigned long count_sends = 0;
 unsigned long next_display_millis = 0;
@@ -2440,16 +2441,17 @@ void connectWifi() {
 }
 
 void setup_network() {
-	static bool networkInitialized = false;
-
 	if(networkInitialized)
 		return;
 
-	display_debug(F("Connecting to"), String(cfg::wlanssid));
-	connectWifi();
-	got_ntp = acquireNetworkTime();
-	debug_out(F("\nNTP time "), DEBUG_MIN_INFO);
-	debug_outln(String(got_ntp ? "" : "not ") + F("received"), DEBUG_MIN_INFO);
+	if (WiFi.status() != WL_CONNECTED) {
+		connectWifi();
+	}
+	if(!got_ntp) {
+		got_ntp = acquireNetworkTime();
+		debug_out(F("\nNTP time "), DEBUG_MIN_INFO);
+		debug_outln(String(got_ntp ? "" : "not ") + F("received"), DEBUG_MIN_INFO);
+	}
 	autoUpdate();
 
 	String server_name = F("airRohr-");
@@ -4271,6 +4273,9 @@ static bool acquireNetworkTime() {
  *****************************************************************/
 extern "C" void setup() {
 	Serial.begin(9600);					// Output to Serial at 9600 baud
+	WiFi.persistent(false);
+	WiFi.setAutoConnect(false);
+	WiFi.mode(WIFI_OFF);
 
 #if defined(ESP32)
 	serialSDS.begin(9600, SERIAL_8N1, D1, D2);
@@ -4314,7 +4319,7 @@ extern "C" void setup() {
 	logEnabledAPIs();
 	logEnabledDisplays();
 
-	setup_network();
+	//setup_network();
 
 	delay(50);
 
@@ -4768,12 +4773,14 @@ void deepSleep(uint32_t us) {
 
 	wdt_disable();
 
-#if 1
-	ESP.deepSleep(us, RF_DISABLED); // TODO which mode is appropriate?
-#else
+	WiFi.disconnect(true);
 	WiFi.mode(WIFI_OFF);
-	WiFi.forceSleepBegin(us);
-#endif
+	networkInitialized = false;
+	got_ntp = false;
+
+	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
+	// RF_DISABLED won't work because it is not possible to enable it later
+	ESP.deepSleep(us, RF_NO_CAL);
 	yield(); // Needed at least for WiFi.forceSleepBegin()
 #endif
 }
