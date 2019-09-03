@@ -14,13 +14,14 @@
 #define FS_SSID ""
 #define FS_PWD ""
 
-// Wohin gehen die Daten?
+// Where to send the data?
 #define SEND2DUSTI 1
 #define SSL_DUSTI 0
 #define SEND2MADAVI 1
 #define SSL_MADAVI 0
 #define SEND2SENSEMAP 0
 #define SEND2FSAPP 0
+#define SEND2AIRCMS 0
 #define SEND2MQTT 0
 #define SEND2INFLUX 0
 #define SEND2LORA 0
@@ -36,19 +37,22 @@
 
 // IMPORTANT: NO MORE CHANGES TO VARIABLE NAMES NEEDED FOR EXTERNAL APIS
 
-// Definition eigene API
+// define own API
 #define HOST_CUSTOM "192.168.234.1"
 #define URL_CUSTOM "/data.php"
 #define PORT_CUSTOM 80
 #define USER_CUSTOM ""
 #define PWD_CUSTOM ""
+#define SSL_CUSTOM 0
 
-// Definition eigene InfluxDB
+// define own InfluxDB
 #define HOST_INFLUX "influx.server"
 #define URL_INFLUX "/write?db=luftdaten"
 #define PORT_INFLUX 8086
 #define USER_INFLUX ""
 #define PWD_INFLUX ""
+#define MEASUREMENT_NAME_INFLUX "feinstaub"
+#define SSL_INFLUX 0
 
 // define pins for I2C
 #define I2C_PIN_SCL D4
@@ -59,6 +63,9 @@
 #define ONEWIRE_PIN D7
 #endif
 #if defined(ARDUINO_SAMD_ZERO)
+#define ONEWIRE_PIN D7
+#endif
+#if defined(ESP32)
 #define ONEWIRE_PIN D7
 #endif
 
@@ -87,15 +94,15 @@
 #define HTU21D_READ 0
 #define HTU21D_API_PIN 7
 
-// PPD42NS, der günstigere der beiden Feinstaubsensoren
+// PPD42NS, the cheaper version of the particle sensor
 #define PPD_READ 0
 #define PPD_API_PIN 5
-#if defined(ARDUINO_SAMD_ZERO) || defined(ESP8266)
+#if defined(ARDUINO_SAMD_ZERO) || defined(ESP8266) || defined(ESP32)
 #define PPD_PIN_PM1 D6
 #define PPD_PIN_PM2 D5
 #endif
 
-// SDS011, der etwas teuerere Feinstaubsensor
+// SDS011, the more expensive version of the particle sensor
 #define SDS_READ 1
 #define SDS_API_PIN 1
 
@@ -106,6 +113,12 @@
 // Honeywell PM sensor
 #define HPM_READ 0
 #define HPM_API_PIN 1
+
+// Sensirion SPS30 PM Sensor I2C connection
+#define SPS30_READ 0
+#define SPS30_API_PIN 1
+#define SPS30_WAITING_AFTER_LAST_READ 11000   // waiting time after last reading mesurement data in ms
+#define SPS30_AUTO_CLEANING_INTERVAL 7200 // time in seconds
 
 // BMP180, temperature, pressure
 #define BMP_READ 0
@@ -123,8 +136,12 @@
 #define DS18B20_READ 0
 #define DS18B20_API_PIN 13
 
+// DNMS Noise Measurement
+#define DNMS_READ 0
+#define DNMS_API_PIN 15
+#define DNMS_CORRECTION "0.0"
 
-// GPS, bevorzugt Neo-6M
+// GPS, preferred Neo-6M
 #define GPS_READ 0
 #define GPS_API_PIN 9
 
@@ -134,65 +151,23 @@
 // use beta firmware
 #define USE_BETA 0
 
-// OLED Display SSD1306 angeschlossen?
+// OLED Display SSD1306 connected?
 #define HAS_DISPLAY 0
 
-// OLED Display SH1106 angeschlossen?
+// OLED Display SH1106 connected?
 #define HAS_SH1106 0
 
-// LCD Display LCD1602 angeschlossen?
+// OLED Display um 180° gedreht?
+#define HAS_FLIPPED_DISPLAY 0
+
+// LCD Display LCD1602 connected?
 #define HAS_LCD1602 0
 
-// LCD Display LCD1602 (0x27) angeschlossen?
+// LCD Display LCD1602 (0x27) connected?
 #define HAS_LCD1602_27 0
 
-// LCD Display LCD2004 (0x27) angeschlossen?
+// LCD Display LCD2004 (0x27) connected?
 #define HAS_LCD2004_27 0
 
-// Wieviele Informationen sollen über die serielle Schnittstelle ausgegeben werden?
+// Set debug level for serial outpur?
 #define DEBUG 3
-
-// Definition der Debuglevel
-#define DEBUG_ERROR 1
-#define DEBUG_WARNING 2
-#define DEBUG_MIN_INFO 3
-#define DEBUG_MED_INFO 4
-#define DEBUG_MAX_INFO 5
-
-/*
-static const uint16_t suites[] PROGMEM = {
-	BR_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	BR_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-	BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-	BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-	BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-	BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
-};
-*/
-
-// Definition GPIOs for Zero based Arduino Feather M0 LoRaWAN
-#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
-// Required for Serial on Zero based boards
-#define Serial SERIAL_PORT_USBVIRTUAL
-//GPIO Pins
-#define D0 0
-#define D1 1
-#define D2 2
-#define D3 3
-#define D4 4
-#define D5 5
-#define D6 6
-#define D7 7
-#define D8 8
-#define D9 9
-#define D10 10
-#define D11 11
-#define D12 12
-// LoRa module
-#define RFM69_CS 8
-#define RFM69_RST 4
-#define RFM69_INT 3
-#define RF69_FREQ 868.0
-#define CLIENT_ADDRESS 2
-#define SERVER_ADDRESS 100
-#endif

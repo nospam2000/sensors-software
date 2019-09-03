@@ -4,9 +4,12 @@ const char TXT_CONTENT_TYPE_TEXT_HTML[] PROGMEM = "text/html; charset=utf-8";
 const char TXT_CONTENT_TYPE_TEXT_PLAIN[] PROGMEM = "text/plain";
 const char TXT_CONTENT_TYPE_IMAGE_SVG[] PROGMEM = "image/svg+xml";
 
-const char DBG_TXT_TEMPERATURE[] PROGMEM = "Temperature: ";
-const char DBG_TXT_HUMIDITY[] PROGMEM = "Humidity: ";
-const char DBG_TXT_PRESSURE[] PROGMEM = "Pressure: ";
+const char DBG_TXT_TEMPERATURE[] PROGMEM = "Temperature: {v} °C";
+const char DBG_TXT_HUMIDITY[] PROGMEM = "Humidity: {v} %";
+const char DBG_TXT_PRESSURE[] PROGMEM = "Pressure: {v} hPa";
+const char DBG_TXT_DNMS_LAEQ[] PROGMEM = "LAeq: ";
+const char DBG_TXT_DNMS_LA_MIN[] PROGMEM = "LA_MIN: ";
+const char DBG_TXT_DNMS_LA_MAX[] PROGMEM = "LA_MAX: ";
 const char DBG_TXT_START_READING[] PROGMEM = "Start reading ";
 const char DBG_TXT_END_READING[] PROGMEM = "End reading ";
 const char DBG_TXT_CHECKSUM_IS[] PROGMEM = "Checksum is: ";
@@ -21,17 +24,22 @@ const char DBG_TXT_SENDING_TO[] PROGMEM = "## Sending to ";
 const char DBG_TXT_SENDING_TO_LUFTDATEN[] PROGMEM = "## Sending to Luftdaten.info ";
 const char DBG_TXT_CALL_SENSOR[] PROGMEM = "Call sensor";
 const char DBG_TXT_SDS011_VERSION_DATE[] PROGMEM = "SDS011 version date";
+const char DBG_TXT_CONNECTING_TO[] PROGMEM = "Connecting to ";
+const char DBG_TXT_FOUND[] PROGMEM = " ... found";
+const char DBG_TXT_NOT_FOUND[] PROGMEM = " ... not found";
 
 const char SENSORS_SDS011[] PROGMEM = "SDS011";
 const char SENSORS_PPD42NS[] PROGMEM = "PPD42NS";
 const char SENSORS_PMSx003[] PROGMEM = "PMSx003";
 const char SENSORS_HPM[] PROGMEM = "Honeywell PM";
+const char SENSORS_SPS30[] PROGMEM = "Sensirion SPS30";
 const char SENSORS_DHT22[] PROGMEM = "DHT22";
 const char SENSORS_DS18B20[] PROGMEM = "DS18B20";
 const char SENSORS_HTU21D[] PROGMEM = "HTU21D";
 const char SENSORS_BMP180[] PROGMEM = "BMP180";
 const char SENSORS_BMP280[] PROGMEM = "BMP280";
 const char SENSORS_BME280[] PROGMEM = "BME280";
+const char SENSORS_DNMS[] PROGMEM = "DNMS";
 
 const char WEB_PAGE_HEADER[] PROGMEM = "<!DOCTYPE html><html>\
 <head>\
@@ -51,7 +59,7 @@ input[type='submit']{border-radius:5px;font-size:medium;padding:5px;}\
 </style>\
 </head><body>\
 <div style='min-height:120px;background-color:#38b5ad;margin-bottom:20px'>\
-<a href='/' style='background:none;width:0;display:inline'><img src='/images?name=luftdaten_logo' style='float:left;margin:20px'/></a>\
+<a href='/' style='background:none;display:inline'><img src='/images?name=luftdaten_logo' style='float:left;width:80px;margin:20px'/></a>\
 <h3 style='margin:0'>{tt}</h3>\
 <small>ID: {id}<br/>MAC: {mac}<br/>{fwt}: {fw}</small></div><div class='content'><h4>{h} {n} {t}</h4>";
 
@@ -99,3 +107,27 @@ const char WEB_IOS_REDIRECT[] PROGMEM = "<html><body>Redirecting...\
 window.location = \"http://192.168.4.1/config\";\
 </script>\
 </body></html>";
+
+const char WEB_B_BR_BR[] PROGMEM = "</b><br/><br/>";
+const char WEB_BRACE_BR[] PROGMEM = ")<br/>";
+const char WEB_B_BR[] PROGMEM = "</b><br/>";
+const char WEB_BR_BR[] PROGMEM = "<br/><br/>";
+const char WEB_BR_FORM[] PROGMEM = "<br/></form>";
+const char WEB_BR_LF_B[] PROGMEM = "<br/>\n<b>";
+const char WEB_LF_B[] PROGMEM = "\n<b>";
+const char WEB_CSV[] PROGMEM = "CSV";
+const char WEB_FEINSTAUB_APP[] PROGMEM = "Feinstaub-App";
+const char WEB_HTTPS[] PROGMEM = "HTTPS";
+const char WEB_NBSP_NBSP_BRACE[] PROGMEM = "&nbsp;&nbsp;(";
+const char WEB_REPLN_REPLV[] PROGMEM = "\"{n}\":\"{v}\",";
+const char WEB_PM1[] PROGMEM = "PM1";
+const char WEB_PM25[] PROGMEM = "PM2.5";
+const char WEB_PM10[] PROGMEM = "PM10";
+const char WEB_PM4[] PROGMEM = "PM4";
+const char WEB_NC0k5[] PROGMEM = "NC0.5";
+const char WEB_NC1k0[] PROGMEM = "NC1.0";
+const char WEB_NC2k5[] PROGMEM = "NC2.5";
+const char WEB_NC4k0[] PROGMEM = "NC4.0";
+const char WEB_NC10[] PROGMEM = "NC10";
+const char WEB_TPS[] PROGMEM = "TPS";
+const char WEB_GPS[] PROGMEM = "GPS";

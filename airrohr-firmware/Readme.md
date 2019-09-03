@@ -1,3 +1,6 @@
+IMPORTANT: All pull requests should be made to the beta branch. The master branch is for the actual stable version. 
+
+
 # Version für Sensoren PPD42NS, SDS011, DHT22, BMP180, NEO-6M und weitere (siehe Konfigurationsseite)
 
 Features:
@@ -52,6 +55,7 @@ Die Daten können als CSV via USB ausgegeben werden. Dafür sollte sowohl in ext
 * Board: NodeMCU 1.0 (ESP-12E Module)
 * CPU Frequency: 160MHz
 * Flash Size: 4M (3M SPIFFS)
+
 Ab "ESP für Arduino 2.4.2":
 * Debug Port: Disabled
 * Debug Level: NoAssert-NDEBUG
@@ -62,6 +66,8 @@ Ab "ESP für Arduino 2.4.2":
   'build.float=-u _printf_float -u _scanf_float'
   ändern in
   'build.float='
+
+* in Wire.h muss bei Verwendung des Sensirion SPS30 noch BUFFER_LENGTH auf 64 gesetzt werden
 
 ### Verwendete Bibliotheken (für ESP8266):
 
@@ -74,19 +80,19 @@ In ESP8266 für Arduino IDE enthalten:
 * ESP8266WebServer (GNU Lesser Public License >=2.1)
 * ESP8266httpUpdate (1.1.0) (GNU Lesser Public License >=2.1)
 * DNSServer (GNU Lesser Public License >=2.1)
+* SoftwareSerial (GNU Lesser Public License >=2.1). Don't install additional library!!!
 
 Installierbar über Arduino IDE (Menü Sketch -> Bibliothek einbinden -> Bibliotheken verwalten, in Klammern die getestete Version und die Art der Lizenz):
-* [ArduinoJson](https://github.com/bblanchon/ArduinoJson) (5.13.2) (MIT)
-* [Adafruit Unified Sensor](https://github.com/adafruit/Adafruit_Sensor) (1.0.2) (Apache)
-* [Adafruit BMP085 library](https://github.com/adafruit/Adafruit-BMP085-Library) (1.0.0) (BSD)
-* [Adafruit BMP280 library](https://github.com/adafruit/Adafruit_BMP280_Library) (1.0.2) (BSD)
-* [Adafruit BME280 library](https://github.com/adafruit/Adafruit_BME280_Library) (1.0.7) (BSD)
+* [ArduinoJson](https://github.com/bblanchon/ArduinoJson) (6.11.5) (MIT)
+* [Adafruit Unified Sensor](https://github.com/adafruit/Adafruit_Sensor) (1.0.3) (Apache)
+* [Adafruit BMP085 library](https://github.com/adafruit/Adafruit-BMP085-Library) (1.0.1) (BSD)
+* [Adafruit BMP280 library](https://github.com/adafruit/Adafruit_BMP280_Library) (1.0.4) (BSD)
+* [Adafruit BME280 library](https://github.com/adafruit/Adafruit_BME280_Library) (1.0.8) (BSD)
+* [Adafruit HTU21DF library](https://github.com/adafruit/Adafruit_HTU21DF_Library) (1.0.1) (BSD)
 * [DallasTemperature](https://github.com/milesburton/Arduino-Temperature-Control-Library) (3.8.0)
 * [ESP8266 and ESP32 Oled driver for SSD1306 display](https://github.com/squix78/esp8266-oled-ssd1306) (4.0.0) (MIT)
 * [OneWire](www.pjrc.com/teensy/td_libs_OneWire.html) (2.3.4)
 * [LiquidCrystal I2C](https://github.com/marcoschwartz/LiquidCrystal_I2C) (1.1.2)
-* [Adafruit HTU21DF Library](https://github.com/adafruit/Adafruit_HTU21DF_Library) (1.0.1)
-* [SoftwareSerial](https://github.com/plerup/espsoftwareserial) (1.0.0) (GNU Lesser Public License >=2.1)
 
 Manuell zu installieren:
 * [TinyGPS++](http://arduiniana.org/libraries/tinygpsplus/) (0.95) (GNU Lesser Public License >=2.1)
@@ -212,3 +218,8 @@ Diese Firmware definiert die Pins für die verschiedenenen Sensoren wie folgt:
 * BMP280 => Pin 3
 * BME280 => Pin 11
 * GPS(Neo-6M) => Pin 9
+
+
+## Translations
+For new translations copy the file intl_template.h and rename it to intl_<2-letter-code>.h, where <2-letter-code> is the ISO-3166-2 2 letter country code. This file contains all strings used for output seen by normal users. Only debug output is (or better should be) English by default.  
+Please take look at the existing translations. This should show you how it works ;-)

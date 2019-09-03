@@ -1,3 +1,33 @@
+NRZ-2019-124-B6
+* noise sensor added
+* Sensirion SPS30 added
+* option to flip OLED output
+* Fix crash on selecting available networks in AP mode
+
+NRZ-2019-124-B5
+* some comments removed
+* Var2Json casts optimized
+* new name "airRohr"
+* new logo (license CC0)
+
+NRZ-2019-124-B4
+* wrong variable use in PMSx003 function
+* showing text on wrong LCD display
+
+NRZ-2019-124-B4
+* SSL options for custom and influxdb added
+
+NRZ-2019-124-B3
+* merged changes for aircms support
+* some optimizations of html code
+* changes for support of ESP32 (not working completely until now)
+
+NRZ-2018-124-B2
+* redefine function overload
+
+NRZ-2018-124-B1
+* code cleanup
+
 NRZ-2018-123
 online since 2018-12-23
 * set CPUFreqency to 160MHz (for faster TLS handling)
