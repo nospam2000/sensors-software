@@ -80,6 +80,36 @@
  *                                                                      *
  ************************************************************************
  *                                                                      *
+ *  Powersave mode                                                      *
+ *
+ *    TODO:
+ *     - implement state machine
+ *     - remove dependencies of sensor reading functions to global data
+ *       (which will be cleared by deepSleep)
+ *
+ * State Machine
+ *   - current step stored in RTC memory
+ * 
+ *   step 0:
+ *     if(confPowerSave && !checkButton())
+ *       goto nextStep=1
+ *     run normal mode
+ *
+ *   step 1:
+ *     start sensors
+ *     nextStep=2
+ *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS)
+ *
+ *   step 2:
+ *     read sensors
+ *     stop sensors
+ *     activate WiFi
+ *     send values
+ *     deactivate WiFi
+ *     nextStep=1
+ *     deepSleep(cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))
+ ************************************************************************
+ *                                                                      *
  * Please check Readme.md for other sensors and hardware                *
  *                                                                      *
  ************************************************************************
@@ -765,6 +795,91 @@ String Var2Json(const String& name, const bool value) {
 String Var2Json(const String& name, const int value) {
 	return Var2Json(name, String(value));
 }
+
+#define rtcOffset (0)
+#define rtcLen (sizeof(RTCData))
+class RTCData {
+private:
+
+	// when adding new members, set the initial values here
+	// this is also used when the RTC didn't contain a valid crc
+	void initValues() {
+		stateMachine = 0;
+	}
+
+public:
+	// all data members are saved to the RTC, so only add members which need to be saved
+	uint32_t crc32;
+	uint16_t stateMachine;
+
+	void save() {
+		updateCRC();
+		ESP.rtcUserMemoryWrite(rtcOffset, (uint32_t*) this, rtcLen);
+	}
+
+	void load() {
+		if(ESP.rtcUserMemoryRead(rtcOffset, (uint32_t*) this, rtcLen)) {
+			if(!checkCRC()) {
+				initValues();
+				debug_outln(FPSTR("Saved RTC data invalid"), DEBUG_MIN_INFO);
+
+				// TODO: remove dump code
+				char buf[3];
+				uint8_t *ptr = (uint8_t *)this;
+				for (size_t i = 0; i < rtcLen; i++) {
+					sprintf(buf, "%02X", ptr[i]);
+					Serial.print(buf);
+					if ((i + 1) % 32 == 0) {
+					Serial.println();
+					} else {
+					Serial.print(" ");
+					}
+				}
+				Serial.println();
+			}
+		}		
+	}
+
+private:
+	bool checkCRC() {
+		return calcRtcDataCRC() == crc32;
+	}
+
+	void updateCRC() {
+		crc32 = calcRtcDataCRC();
+	}
+
+	uint32_t calcRtcDataCRC() {
+		uint32_t crc32_read = crc32; // save for later
+		crc32 = 0; // this is part of the calculated value, set it to a defined value
+		uint32_t crc32_calc = crc32Buffer(reinterpret_cast<const uint8_t*>(this), rtcLen);
+		crc32 = crc32_read; // restore
+		return crc32_calc;
+	}
+
+	uint32_t crc32Buffer(const uint8_t *data, size_t length) {
+		uint32_t crc = 0xffffffff;
+		while (length--) {
+			uint8_t c = *data++;
+			for (uint32_t i = 0x80; i > 0; i >>= 1) {
+				bool bit = crc & 0x80000000;
+				if (c & i) {
+					bit = !bit;
+				}
+				crc <<= 1;
+				if (bit) {
+					crc ^= 0x04c11db7;
+				}
+			}
+		}
+		return crc;
+	}
+};
+// TODO: check the data size against the size of the usable RTC memory (excluding system area and depending on ESP8266/ESP32)
+//#if (rtcLen > 512)
+//#error "RTC data size too large"
+//#endif
+RTCData rtcData;
 
 /*****************************************************************
  * send SDS011 command (start, stop, continuous mode, version    *
@@ -4276,6 +4391,7 @@ extern "C" void setup() {
 	WiFi.persistent(false);
 	WiFi.setAutoConnect(false);
 	WiFi.mode(WIFI_OFF);
+	rtcData.load();
 
 #if defined(ESP32)
 	serialSDS.begin(9600, SERIAL_8N1, D1, D2);
@@ -4782,6 +4898,7 @@ void deepSleep(uint32_t us, bool switchOffSensors) {
 	WiFi.mode(WIFI_OFF);
 	networkInitialized = false;
 	got_ntp = false;
+	rtcData.save();
 
 	// sleep mode RF_DISABLED won't work because it is not possible to enable WiFi on demand
 	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
