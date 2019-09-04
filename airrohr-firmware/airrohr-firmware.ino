@@ -90,20 +90,21 @@
  * State Machine
  *   - current step stored in RTC memory
  * 
- *   step 0 (initial power on):
- *     if(confPowerSave)
- *       if(!checkPowerSafeDisabledJumper())
- *         goto nextStep=101 temporary normal mode, then powersave mode
- *     goto nextStep=100 (normal mode)
+ *   step 0 (initial power on): // WiFi off
+ *     if(confPowerSave && !checkPowerSafeDisabledJumper())
+ *       nextStep=101 temporary normal mode, then powersave mode
+ *     else
+ *       nextStep=100 (normal mode)
+ *     deepSleep(1, RF_DEFAULT)
  *
- *   step 1:
+ *   step 1: // WiFi off
  *     if(checkPowerSafeDisabledJumper())
  *       goto nextStep=100 (normal mode)
  *     start sensors
  *     nextStep=2
- *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS)
+ *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS, RF_DEFAULT)
  *
- *   step 2:
+ *   step 2: // requires WiFi
  *     if(checkPowerSafeDisabledJumper())
  *       goto nextStep=100 (normal mode)
  *     read sensors
@@ -112,14 +113,18 @@
  *     send values
  *     deactivate WiFi
  *     nextStep=1
- *     deepSleep(cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))
+ *     deepSleep(cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS), RF_DISABLED)
  *
- *   step 100:
- *      normal mode (for unlimited time)
+ *   step 100: // requires WiFi
+ *     normal mode (for unlimited time)
  *
- *   step 101:
- *      normal mode for 5 to 10 minutes // make it possible to access the web interface
- *      goto nextStep=1
+ *   step 101: // requires WiFi
+ *     normal mode for 5 to 10 minutes // make it possible to access the web interface
+ *     if(checkPowerSafeDisabledJumper())
+ *       goto nextStep=100 (normal mode)
+ *     after 5 minutes     
+ *       nextStep=1
+ *       deepSleep(1, RF_DEFAULT)
  ************************************************************************
  *                                                                      *
  * Please check Readme.md for other sensors and hardware                *
@@ -808,7 +813,7 @@ String Var2Json(const String& name, const int value) {
 	return Var2Json(name, String(value));
 }
 
-#define rtcOffset (0)
+#define rtcOffset (0) // this range is cleared after an OTA update which is good!
 #define rtcLen (sizeof(RTCData))
 class RTCData {
 private:
