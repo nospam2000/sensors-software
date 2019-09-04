@@ -387,14 +387,14 @@ WebServer server(80);
 int TimeZone = 1;
 
 /*****************************************************************
- * Function prototypes (to make it cpp compatible in VS Code)
+ * Function prototypes (to make it cpp compatible in VS Code)    *
  *****************************************************************/
 String Float2String(const double value);
 String Float2String(const double value, uint8_t digits);
 void writeConfig();
 String add_sensor_type(const String& sensor_text);
 void webserver_not_found();
-void deepSleep(uint32_t us);
+void deepSleep(uint32_t us, bool switchOffSensors = true);
 static bool acquireNetworkTime();
 static void autoUpdate();
 
@@ -4760,27 +4760,33 @@ extern "C" void loop() {
 	}
 }
 
-void deepSleep(uint32_t us) {
+void deepSleep(uint32_t us, bool switchOffSensors) {
 #if defined(POWERSAVE)
-	if (cfg::sds_read)
-		SDS_cmd(PmSensorCmd::Stop);
+	// Setting any global variables in this function would only makes sense when
+	// ESP.deepSleep() would not completely reset the CPU. Nevertheless for
+	// the sake of code readability those variables are set.
+	if(switchOffSensors)
+	{
+		if (cfg::sds_read && is_SDS_running)
+			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
 
-	if (cfg::pms_read)
-		PMS_cmd(PmSensorCmd::Stop);
+		if (cfg::pms_read && is_PMS_running)
+			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
 
-	if (cfg::hpm_read)
-		HPM_cmd(PmSensorCmd::Stop);
+		if (cfg::hpm_read && is_HPM_running)
+			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+	}
 
 	wdt_disable();
-
 	WiFi.disconnect(true);
 	WiFi.mode(WIFI_OFF);
 	networkInitialized = false;
 	got_ntp = false;
 
+	// sleep mode RF_DISABLED won't work because it is not possible to enable WiFi on demand
 	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
-	// RF_DISABLED won't work because it is not possible to enable it later
+	// and https://blog.creations.de/?p=149
 	ESP.deepSleep(us, RF_NO_CAL);
-	yield(); // Needed at least for WiFi.forceSleepBegin()
+	//yield(); // Needed at least for WiFi.forceSleepBegin()
 #endif
 }
