@@ -90,17 +90,22 @@
  * State Machine
  *   - current step stored in RTC memory
  * 
- *   step 0:
- *     if(confPowerSave && !checkButton())
- *       goto nextStep=1
- *     run normal mode
+ *   step 0 (initial power on):
+ *     if(confPowerSave)
+ *       if(!checkPowerSafeDisabledJumper())
+ *         goto nextStep=101 temporary normal mode, then powersave mode
+ *     goto nextStep=100 (normal mode)
  *
  *   step 1:
+ *     if(checkPowerSafeDisabledJumper())
+ *       goto nextStep=100 (normal mode)
  *     start sensors
  *     nextStep=2
  *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS)
  *
  *   step 2:
+ *     if(checkPowerSafeDisabledJumper())
+ *       goto nextStep=100 (normal mode)
  *     read sensors
  *     stop sensors
  *     activate WiFi
@@ -108,6 +113,13 @@
  *     deactivate WiFi
  *     nextStep=1
  *     deepSleep(cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))
+ *
+ *   step 100:
+ *      normal mode (for unlimited time)
+ *
+ *   step 101:
+ *      normal mode for 5 to 10 minutes // make it possible to access the web interface
+ *      goto nextStep=1
  ************************************************************************
  *                                                                      *
  * Please check Readme.md for other sensors and hardware                *
