@@ -419,7 +419,8 @@ enum class PmSensorCmd {
 	Start,
 	Stop,
 	ContinuousMode,
-	VersionDate
+	VersionDate,
+	QueryData
 };
 
 String basic_auth_influx;
@@ -1228,8 +1229,8 @@ extern "C" void loop_StateSensorWarmup() {
 	//act_milli = starttime + (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) + 1;
 	switchSensors(true, true);
 	rtcData.stateMachine = 2;
-	//deepSleep(3*(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000, false, false);
-	deepSleep(60000 * 1000, false, false); // 50000ms is not enough, 60000ms work
+	//deepSleep((WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000, false, false);
+	deepSleep((WARMUPTIME_SDS_MS) * 1000, false, false);
 }
 
 /*****************************************************************
@@ -1248,6 +1249,17 @@ static bool SDS_cmd(PmSensorCmd cmd) {
 	static constexpr uint8_t version_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x05, 0xAB
 	};
+	/*
+	static constexpr uint8_t data_reporting_set_active_cmd[] PROGMEM = {
+		0xAA, 0xB4, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0xAB
+	};
+	static constexpr uint8_t data_reporting_set_query_cmd[] PROGMEM = {
+		0xAA, 0xB4, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x02, 0xAB
+	};
+	*/
+	static constexpr uint8_t query_data_cmd[] PROGMEM = {
+		0xAA, 0xB4, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x02, 0xAB
+	};
 	constexpr uint8_t cmd_len = array_num_elements(start_cmd);
 
 	uint8_t buf[cmd_len];
@@ -1263,6 +1275,9 @@ static bool SDS_cmd(PmSensorCmd cmd) {
 		break;
 	case PmSensorCmd::VersionDate:
 		memcpy_P(buf, version_cmd, cmd_len);
+		break;
+	case PmSensorCmd::QueryData:
+		memcpy_P(buf, query_data_cmd, cmd_len);
 		break;
 	}
 	serialSDS.write(buf, cmd_len);
@@ -1296,6 +1311,7 @@ static bool PMS_cmd(PmSensorCmd cmd) {
 		memcpy_P(buf, continuous_mode_cmd, cmd_len);
 		break;
 	case PmSensorCmd::VersionDate:
+	case PmSensorCmd::QueryData:
 		assert(false && "not supported by this sensor");
 		break;
 	}
@@ -1330,6 +1346,7 @@ static bool HPM_cmd(PmSensorCmd cmd) {
 		memcpy_P(buf, continuous_mode_cmd, cmd_len);
 		break;
 	case PmSensorCmd::VersionDate:
+	case PmSensorCmd::QueryData:
 		assert(false && "not supported by this sensor");
 		break;
 	}
@@ -3395,6 +3412,8 @@ static String sensorSDS() {
 		if (! is_SDS_running) {
 			is_SDS_running = SDS_cmd(PmSensorCmd::Start);
 		}
+		SDS_cmd(PmSensorCmd::QueryData);
+		delay((10 + 2) * (1+8+1) * 1000 / 9600); // 10 characters at 9600 bps (8N1) + 20% extra
 
 		while (serialSDS.available() > 0) {
 			buffer = serialSDS.read();
@@ -4590,34 +4609,47 @@ static void powerOnTestSensors(bool dontInitPmSensors) {
 		debug_outln(F("Read PPD..."), DEBUG_MIN_INFO);
 	}
 
-	if (!dontInitPmSensors && cfg::sds_read) {
+	if (cfg::sds_read) {
 		debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
-		SDS_cmd(PmSensorCmd::Start);
-		delay(100);
+		if (!dontInitPmSensors) {
+			debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
+			SDS_cmd(PmSensorCmd::Start);
+			delay(100);
+		}
 		SDS_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		debug_outln(F("Stopping SDS011..."), DEBUG_MIN_INFO);
-		is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
+		if (!dontInitPmSensors) {
+			debug_outln(F("Stopping SDS011..."), DEBUG_MIN_INFO);
+			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
+		}
 	}
 
-	if (!dontInitPmSensors && cfg::pms_read) {
+	if (cfg::pms_read) {
 		debug_outln(F("Read PMS(1,3,5,6,7)003..."), DEBUG_MIN_INFO);
-		PMS_cmd(PmSensorCmd::Start);
-		delay(100);
+		if (!dontInitPmSensors) {
+			PMS_cmd(PmSensorCmd::Start);
+			delay(100);
+		}
 		PMS_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		debug_outln(F("Stopping PMS..."), DEBUG_MIN_INFO);
-		is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
+		if (!dontInitPmSensors) {
+			debug_outln(F("Stopping PMS..."), DEBUG_MIN_INFO);
+			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
+		}
 	}
 
-	if (!dontInitPmSensors && cfg::hpm_read) {
+	if (cfg::hpm_read) {
 		debug_outln(F("Read HPM..."), DEBUG_MIN_INFO);
-		HPM_cmd(PmSensorCmd::Start);
-		delay(100);
+		if (!dontInitPmSensors) {
+			HPM_cmd(PmSensorCmd::Start);
+			delay(100);
+		}
 		HPM_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		debug_outln(F("Stopping HPM..."), DEBUG_MIN_INFO);
-		is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+		if (!dontInitPmSensors) {
+			debug_outln(F("Stopping HPM..."), DEBUG_MIN_INFO);
+			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+		}
 	}
 
 	if (cfg::sps30_read) {
