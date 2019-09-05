@@ -447,9 +447,10 @@ String Float2String(const double value, uint8_t digits);
 void writeConfig();
 String add_sensor_type(const String& sensor_text);
 void webserver_not_found();
-void deepSleep(uint32_t us, bool switchOffSensors = true);
+void deepSleep(uint32_t us, bool switchOffSensors = true, bool switchOffWiFiOnRestart = false);
 static bool acquireNetworkTime();
 static void autoUpdate();
+static void powerOnTestSensors(bool dontInitPmSensors);
 
 /*****************************************************************
  * Variables for Noise Measurement DNMS                          *
@@ -827,7 +828,7 @@ private:
 	// when adding new members, set the initial values here
 	// this is also used when the RTC didn't contain a valid crc
 	void initValues() {
-		stateMachine = 0;
+		stateMachine = 1; // TODO: for testing this is 1, normally it should be 0
 	}
 
 public:
@@ -4255,14 +4256,14 @@ bool initDNMS() {
 	}
 }
 
-static void powerOnTestSensors() {
+static void powerOnTestSensors(bool dontInitPmSensors) {
 	if (cfg::ppd_read) {
 		pinMode(PPD_PIN_PM1, INPUT_PULLUP);					// Listen at the designated PIN
 		pinMode(PPD_PIN_PM2, INPUT_PULLUP);					// Listen at the designated PIN
 		debug_outln(F("Read PPD..."), DEBUG_MIN_INFO);
 	}
 
-	if (cfg::sds_read) {
+	if (!dontInitPmSensors && cfg::sds_read) {
 		debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
 		SDS_cmd(PmSensorCmd::Start);
 		delay(100);
@@ -4272,7 +4273,7 @@ static void powerOnTestSensors() {
 		is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
 	}
 
-	if (cfg::pms_read) {
+	if (!dontInitPmSensors && cfg::pms_read) {
 		debug_outln(F("Read PMS(1,3,5,6,7)003..."), DEBUG_MIN_INFO);
 		PMS_cmd(PmSensorCmd::Start);
 		delay(100);
@@ -4282,7 +4283,7 @@ static void powerOnTestSensors() {
 		is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
 	}
 
-	if (cfg::hpm_read) {
+	if (!dontInitPmSensors && cfg::hpm_read) {
 		debug_outln(F("Read HPM..."), DEBUG_MIN_INFO);
 		HPM_cmd(PmSensorCmd::Start);
 		delay(100);
@@ -4346,7 +4347,6 @@ static void powerOnTestSensors() {
 			dnms_init_failed = 1;
 		}
 	}
-
 }
 
 static void logEnabledAPIs() {
@@ -4511,6 +4511,10 @@ extern "C" void setup() {
 	WiFi.persistent(false);
 	WiFi.setAutoConnect(false);
 	WiFi.mode(WIFI_OFF);
+	starttime = millis();									// store the start time
+	time_point_device_start_ms = starttime;
+	starttime_SDS = starttime;
+	next_display_millis = starttime + DISPLAY_UPDATE_INTERVAL_MS;
 	rtcData.load();
 
 #if defined(ESP32)
@@ -4532,19 +4536,32 @@ extern "C" void setup() {
 	esp_chipid = String((uint16_t)(chipid_num >> 32), HEX);
 	esp_chipid += String((uint32_t)chipid_num, HEX);
 #endif
-	cfg::initNonTrivials(esp_chipid.c_str());
-	readConfig();
-
-	init_display();
-	init_lcd();
-	setup_webserver();
-
-	create_basic_auth_strings();
 	serialSDS.begin(9600);
 	debug_out(F("\nChipId: "), DEBUG_MIN_INFO);
 	debug_outln(esp_chipid, DEBUG_MIN_INFO);
+	cfg::initNonTrivials(esp_chipid.c_str());
+	readConfig();
 
-	powerOnTestSensors();
+	// for the powersave states, these initializations are not good
+	if(rtcData.stateMachine == 0 || rtcData.stateMachine >= 100)
+	{
+		init_display();
+		init_lcd();
+		setup_webserver();
+
+		create_basic_auth_strings();
+
+		powerOnTestSensors(false);
+	}
+	else
+	{
+		powerOnTestSensors(true);
+
+		// those have been initialized in the previous
+		is_SDS_running = cfg::sds_read;
+		is_PMS_running = cfg::pms_read;
+		is_HPM_running = cfg::hpm_read;
+	}
 
 	if (cfg::gps_read) {
 		serialGPS.begin(9600);
@@ -4564,17 +4581,351 @@ extern "C" void setup() {
 	wdt_disable();
 	wdt_enable(30000);
 #endif
-
-	starttime = millis();									// store the start time
-	time_point_device_start_ms = starttime;
-	starttime_SDS = starttime;
-	next_display_millis = starttime + DISPLAY_UPDATE_INTERVAL_MS;
 }
 
 /*****************************************************************
  * And action                                                    *
  *****************************************************************/
+void switchSensors(bool on, bool force)
+{
+	if (cfg::sds_read && (force || is_SDS_running != on))
+		is_SDS_running = SDS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+
+	if (cfg::pms_read && (force || is_PMS_running != on))
+		is_PMS_running = PMS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+
+	if (cfg::hpm_read && (force || is_HPM_running != on))
+		is_HPM_running = HPM_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+}
+
+void deepSleep(uint32_t us, bool switchOffSensors, bool switchOffWiFiOnRestart) {
+#if defined(POWERSAVE)
+	// Setting any global variables in this function would only makes sense when
+	// ESP.deepSleep() would not completely reset the CPU. Nevertheless for
+	// the sake of code readability those variables are set.
+	if(switchOffSensors)
+	{
+		switchSensors(false, true);
+	}
+
+	wdt_disable();
+	WiFi.disconnect(true);
+	WiFi.mode(WIFI_OFF);
+	networkInitialized = false;
+	got_ntp = false;
+	rtcData.save();
+
+	// sleep mode RF_DISABLED won't work because it is not possible to enable WiFi on demand
+	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
+	// and https://blog.creations.de/?p=149
+	ESP.deepSleep(us, switchOffWiFiOnRestart ? RF_DISABLED : RF_DEFAULT);
+	//yield(); // Needed at least for WiFi.forceSleepBegin()
+#endif
+}
+
+extern "C" void loop_StateMeasureAndSend() {
+	String result_PPD, result_SDS, result_PMS, result_HPM, result_SPS30;
+	String result_DHT, result_HTU21D, result_BMP, result_BMP280;
+	String result_BME280, result_DS18B20, result_GPS, result_DNMS;
+	int16_t ret_SPS30;
+
+	unsigned long sum_send_time = 0;
+
+	//act_milli = millis();
+	act_micro = micros();
+	send_now = true;
+	sample_count++;
+
+	// fake starttime so the sensor reading can start
+	// because the sensor functions contain the following check:
+	//if (msSince(starttime) > (cfg::sending_intervall_ms - READINGTIME_SDS_MS))
+	//starttime = act_milli - ((cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1);
+	//act_milli = starttime + (cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1;
+
+	act_milli = starttime + ((cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1);
+
+	//if (msSince(starttime) >= (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
+	//if ((msSince(starttime) > (cfg::sending_intervall_ms - READINGTIME_SDS_MS))) {
+
+
+#if defined(ESP8266)
+	wdt_reset(); // nodemcu is alive
+#endif
+
+	debug_outln(FPSTR("loop_StateMeasureAndSend"), DEBUG_MIN_INFO);
+
+	if (cfg::sps30_read && ( !sps30_init_failed)) {
+		//if ((msSince(starttime) - SPS30_read_timer) > SPS30_WAITING_AFTER_LAST_READ)
+		{
+			SPS30_read_timer = msSince(starttime);
+			ret_SPS30 = sps30_read_measurement(&sps30_values);
+			++SPS30_read_counter;
+			if (ret_SPS30 < 0) {
+				debug_outln(F("SPS30 error reading measurement"), DEBUG_MIN_INFO);
+				SPS30_read_error_counter++;
+			} else {
+				if (SPS_IS_ERR_STATE(ret_SPS30)) {
+					debug_outln(F("SPS30 measurements may not be accurate"), DEBUG_MIN_INFO);
+					SPS30_read_error_counter++;
+				}
+				value_SPS30_P0 += sps30_values.mc_1p0;
+				value_SPS30_P1 += sps30_values.mc_2p5;
+				value_SPS30_P2 += sps30_values.mc_4p0;
+				value_SPS30_P3 += sps30_values.mc_10p0;
+				value_SPS30_N0 += sps30_values.nc_0p5;
+				value_SPS30_N1 += sps30_values.nc_1p0;
+				value_SPS30_N2 += sps30_values.nc_2p5;
+				value_SPS30_N3 += sps30_values.nc_4p0;
+				value_SPS30_N4 += sps30_values.nc_10p0;
+				value_SPS30_TS += sps30_values.tps;
+				++SPS30_measurement_count;
+			}
+		}
+	}
+
+	if (cfg::ppd_read) {
+		debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + "PPD", DEBUG_MAX_INFO);
+		result_PPD = sensorPPD();
+	}
+
+	if ((msSince(starttime_SDS) > SAMPLETIME_SDS_MS) || send_now) {
+		if (cfg::sds_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + "SDS", DEBUG_MAX_INFO);
+			result_SDS = sensorSDS();
+			starttime_SDS = act_milli;
+		}
+
+		if (cfg::pms_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + "PMS", DEBUG_MAX_INFO);
+			result_PMS = sensorPMS();
+			starttime_SDS = act_milli;
+		}
+
+		if (cfg::hpm_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + "HPM", DEBUG_MAX_INFO);
+			result_HPM = sensorHPM();
+			starttime_SDS = act_milli;
+		}
+	}
+
+	if (send_now) {
+		if (cfg::dht_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_DHT22), DEBUG_MAX_INFO);
+			result_DHT = sensorDHT();						// getting temperature and humidity (optional)
+		}
+
+		if (cfg::htu21d_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_HTU21D), DEBUG_MAX_INFO);
+			result_HTU21D = sensorHTU21D();					// getting temperature and humidity (optional)
+		}
+
+		if (cfg::bmp_read && (! bmp_init_failed)) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_BMP180), DEBUG_MAX_INFO);
+			result_BMP = sensorBMP();						// getting temperature and pressure (optional)
+		}
+
+		if (cfg::bmp280_read && (! bmp280_init_failed)) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_BMP280), DEBUG_MAX_INFO);
+			result_BMP280 = sensorBMP280();					// getting temperature, humidity and pressure (optional)
+		}
+
+		if (cfg::bme280_read && (! bme280_init_failed)) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_BME280), DEBUG_MAX_INFO);
+			result_BME280 = sensorBME280();					// getting temperature, humidity and pressure (optional)
+		}
+
+		if (cfg::ds18b20_read) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_DS18B20), DEBUG_MAX_INFO);
+			result_DS18B20 = sensorDS18B20();				// getting temperature (optional)
+		}
+
+		if (cfg::sps30_read && (! sps30_init_failed)) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_SPS30), DEBUG_MAX_INFO);
+			result_SPS30 = sensorSPS30();               // getting PM values
+		}
+
+		if (cfg::dnms_read && (! dnms_init_failed)) {
+			debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + FPSTR(SENSORS_DNMS), DEBUG_MAX_INFO);
+			result_DNMS = sensorDNMS();                 // getting noise measurement values from dnms (optional)
+		}
+	}
+
+	if (cfg::gps_read && ((msSince(starttime_GPS) > SAMPLETIME_GPS_MS) || send_now)) {
+		debug_outln(String(FPSTR(DBG_TXT_CALL_SENSOR)) + "GPS", DEBUG_MAX_INFO);
+		result_GPS = sensorGPS();							// getting GPS coordinates
+		starttime_GPS = act_milli;
+	}
+
+	if ((cfg::has_display || cfg::has_sh1106 || cfg::has_lcd2004_27 || cfg::has_lcd1602 ||
+			cfg::has_lcd1602_27) && (act_milli > next_display_millis)) {
+		display_values();
+	}
+
+	if (send_now) {
+		debug_outln(F("Creating data string:"), DEBUG_MIN_INFO);
+		String data = tmpl(FPSTR(data_first_part), SOFTWARE_VERSION);
+		String data_sample_times = Value2Json(F("samples"), String(sample_count)); // TODO: 'sample_count' will always be 1 so it is useless
+		//data_sample_times += Value2Json(F("min_micro"), String(min_micro));
+		//data_sample_times += Value2Json(F("max_micro"), String(max_micro));
+
+		const int HTTP_PORT_DUSTI = (cfg::ssl_dusti ? 443 : 80);
+		if (cfg::ppd_read) {
+			data += result_PPD;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(PPD42NS): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_PPD, PPD_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "PPD_");
+			}
+		}
+		if (cfg::sds_read) {
+			data += result_SDS;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(SDS): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_SDS, SDS_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "SDS_");
+			}
+		}
+		if (cfg::pms_read) {
+			data += result_PMS;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(PMS): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_PMS, PMS_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "PMS_");
+			}
+		}
+		if (cfg::hpm_read) {
+			data += result_HPM;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(HPM): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_HPM, HPM_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "HPM_");
+			}
+		}
+		if (cfg::sps30_read && (! sps30_init_failed)) {
+			data += result_SPS30;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(SPS30): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_SPS30, SPS30_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "SPS30_");
+			}
+		}
+		if (cfg::dht_read) {
+			data += result_DHT;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(DHT): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_DHT, DHT_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "DHT_");
+			}
+		}
+		if (cfg::htu21d_read) {
+			data += result_HTU21D;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(HTU21D): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_HTU21D, HTU21D_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "HTU21D_");
+			}
+		}
+		if (cfg::bmp_read && (! bmp_init_failed)) {
+			data += result_BMP;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(BMP): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_BMP, BMP_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "BMP_");
+			}
+		}
+		if (cfg::bmp280_read && (! bmp280_init_failed)) {
+			data += result_BMP280;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(BMP280): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_BMP280, BMP280_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "BMP280_");
+			}
+		}
+		if (cfg::bme280_read && (! bme280_init_failed)) {
+			data += result_BME280;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(BME280): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_BME280, BME280_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "BME280_");
+			}
+		}
+
+		if (cfg::ds18b20_read) {
+			data += result_DS18B20;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(DS18B20): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_DS18B20, DS18B20_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "DS18B20_");
+			}
+		}
+
+		if (cfg::dnms_read && (! dnms_init_failed)) {
+			data += result_DNMS;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(DNMS): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_DNMS, DNMS_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "DNMS_");
+			}
+		}
+
+		if (cfg::gps_read) {
+			data += result_GPS;
+			if (cfg::send2dusti) {
+				debug_outln(String(FPSTR(DBG_TXT_SENDING_TO_LUFTDATEN)) + F("(GPS): "), DEBUG_MIN_INFO);
+				sum_send_time += sendLuftdaten(result_GPS, GPS_API_PIN, HOST_DUSTI, HTTP_PORT_DUSTI, URL_DUSTI, cfg::ssl_dusti, true, "GPS_");
+			}
+		}
+
+		setup_network();
+		String signal_strength = String(WiFi.RSSI());
+		debug_out(F("WLAN signal strength: "), DEBUG_MIN_INFO);
+		debug_out(signal_strength, DEBUG_MIN_INFO);
+		debug_outln(" dBm", DEBUG_MIN_INFO);
+		debug_outln("----", DEBUG_MIN_INFO);
+
+		data_sample_times += Value2Json(F("signal"), signal_strength);
+		data += data_sample_times;
+
+		if ((unsigned)(data.lastIndexOf(',') + 1) == data.length()) {
+			data.remove(data.length() - 1);
+		}
+		data += "]}";
+
+		sum_send_time += sendDataToOptionalApis(data);
+
+
+		if (msSince(last_update_attempt) > PAUSE_BETWEEN_UPDATE_ATTEMPTS_MS) {
+			autoUpdate(); // TODO: this will never be called because the time will never be reached
+		}
+
+		sending_time = sum_send_time;
+		debug_out(F("Time for sending data (ms): "), DEBUG_MIN_INFO);
+		debug_outln(String(sending_time), DEBUG_MIN_INFO);
+	}
+
+	rtcData.stateMachine = 1;
+	//deepSleep(cfg::sending_intervall_ms * 1000, true, true); TODO: restore this
+	deepSleep(32000 * 1000, true, true);
+}
+
+extern "C" void loop_StateSensorWarmup() {
+	// TODO: make sure the setup() doesn't do any reset of the sensor after the wakeup
+#if defined(ESP8266)
+	wdt_reset(); // nodemcu is alive
+#endif
+
+	debug_outln(FPSTR("loop_StateSensorWarmup"), DEBUG_MIN_INFO);
+
+	// make sure all the sensors are running to warm up
+	// fake time sind last starttime so the sensor thinks it is time to start warm up
+	//act_milli = starttime + (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) + 1;
+	switchSensors(true, true);
+	rtcData.stateMachine = 2;
+	deepSleep(3*(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000, false, false);
+}
+
 extern "C" void loop() {
+	switch(rtcData.stateMachine) {
+		case 1:
+			loop_StateSensorWarmup();
+			break;
+
+		case 2:
+			loop_StateMeasureAndSend();
+			break;
+
+		default:
+			break;
+	}
+
 	String result_PPD, result_SDS, result_PMS, result_HPM, result_SPS30;
 	String result_DHT, result_HTU21D, result_BMP, result_BMP280;
 	String result_BME280, result_DS18B20, result_GPS, result_DNMS;
@@ -4878,34 +5229,3 @@ extern "C" void loop() {
 	}
 }
 
-void deepSleep(uint32_t us, bool switchOffSensors) {
-#if defined(POWERSAVE)
-	// Setting any global variables in this function would only makes sense when
-	// ESP.deepSleep() would not completely reset the CPU. Nevertheless for
-	// the sake of code readability those variables are set.
-	if(switchOffSensors)
-	{
-		if (cfg::sds_read && is_SDS_running)
-			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
-
-		if (cfg::pms_read && is_PMS_running)
-			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
-
-		if (cfg::hpm_read && is_HPM_running)
-			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
-	}
-
-	wdt_disable();
-	WiFi.disconnect(true);
-	WiFi.mode(WIFI_OFF);
-	networkInitialized = false;
-	got_ntp = false;
-	rtcData.save();
-
-	// sleep mode RF_DISABLED won't work because it is not possible to enable WiFi on demand
-	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
-	// and https://blog.creations.de/?p=149
-	ESP.deepSleep(us, RF_NO_CAL);
-	//yield(); // Needed at least for WiFi.forceSleepBegin()
-#endif
-}
