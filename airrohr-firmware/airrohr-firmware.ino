@@ -4575,7 +4575,6 @@ extern "C" void setup() {
  * And action                                                    *
  *****************************************************************/
 extern "C" void loop() {
-void loop() {
 	String result_PPD, result_SDS, result_PMS, result_HPM, result_SPS30;
 	String result_DHT, result_HTU21D, result_BMP, result_BMP280;
 	String result_BME280, result_DS18B20, result_GPS, result_DNMS;
