@@ -932,13 +932,13 @@ void deepSleep(uint32_t us, bool switchOffSensors, bool switchOffWiFiOnRestart) 
 	wdt_disable();
 	WiFi.disconnect(true);
 	WiFi.mode(WIFI_OFF);
-	networkInitialized = false;
-	got_ntp = false;
+	//networkInitialized = false;
+	//got_ntp = false;
 	rtcData.save();
 
-	// sleep mode RF_DISABLED won't work because it is not possible to enable WiFi on demand
-	// see https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
-	// and https://blog.creations.de/?p=149
+	// for issues with sleep mode RF_DISABLED refer to these links:
+	//   https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
+	//   https://blog.creations.de/?p=149
 	ESP.deepSleep(us, switchOffWiFiOnRestart ? RF_DISABLED : RF_DEFAULT);
 	//yield(); // Needed at least for WiFi.forceSleepBegin()
 #endif
@@ -952,22 +952,14 @@ extern "C" void loop_StateMeasureAndSend() {
 
 	unsigned long sum_send_time = 0;
 
-	//act_milli = millis();
 	act_micro = micros();
 	send_now = true;
 	sample_count++;
 
-	// fake starttime so the sensor reading can start
+	// fake act_milli so the sensor reading can start
 	// because the sensor functions contain the following check:
 	//if (msSince(starttime) > (cfg::sending_intervall_ms - READINGTIME_SDS_MS))
-	//starttime = act_milli - ((cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1);
-	//act_milli = starttime + (cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1;
-
 	act_milli = starttime + ((cfg::sending_intervall_ms - READINGTIME_SDS_MS) + 1);
-
-	//if (msSince(starttime) >= (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
-	//if ((msSince(starttime) > (cfg::sending_intervall_ms - READINGTIME_SDS_MS))) {
-
 
 #if defined(ESP8266)
 	wdt_reset(); // nodemcu is alive
@@ -1028,6 +1020,7 @@ extern "C" void loop_StateMeasureAndSend() {
 			starttime_SDS = act_milli;
 		}
 	}
+	switchSensors(false, false); // turn off the sensors as early as possible
 
 	if (send_now) {
 		if (cfg::dht_read) {
@@ -1230,7 +1223,8 @@ extern "C" void loop_StateSensorWarmup() {
 	switchSensors(true, true);
 	rtcData.stateMachine = 2;
 	//deepSleep((WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000, false, false);
-	deepSleep((WARMUPTIME_SDS_MS) * 1000, false, false);
+	//deepSleep((WARMUPTIME_SDS_MS) * 1000, false, false);
+	deepSleep((5000) * 1000, false, false);
 }
 
 /*****************************************************************
