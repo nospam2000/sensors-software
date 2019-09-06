@@ -83,9 +83,24 @@
  *  Powersave mode                                                      *
  *
  *    TODO:
- *     - testing, clean up debug messages and log levels
+ *     - do measurements
+ *     - fix problem in normal mode (activating the SDS sensor fan fails in current version)
+ *     - testing
+ *     - add a switch to disable powersafe mode in the WebUI
+ *     - modularize loop() and reuse the code
+ *     - fix mDNS crash or remove mDNS (see https://github.com/esp8266/Arduino/issues/4417)
+ *     - clean up debug messages and log levels
  *     - remove dependencies of sensor reading functions to global data
  *       (which will be cleared by deepSleep): starttime, act_milli
+ *     - add brownout detection to protect LiIon battery
+ *       for LOLIN D32 PRO board: batteryVoltage = analogRead(35) / 4096.0 * 7.445;
+ *       see also https://www.esp32.com/viewtopic.php?t=2462
+ *         #include "soc/soc.h"
+ *         #include "soc/rtc_cntl_reg.h"
+ *         WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+ *     - use wifi_status_led_uninstall() to disable status led?
+ *     - use system_get_rtc_time() after deep sleep to get a time reference
+ *       when using deep sleep?
  *
  * State Machine
  *   - current step stored in RTC memory
@@ -163,21 +178,6 @@
 #endif
 
 #include <Arduino.h>
-#define POWERSAVE
-// TODO: add brownout detection to protect LiIon battery
-// for LOLIN D32 PRO board: batteryVoltage = analogRead(35) / 4096.0 * 7.445;
-/*
-see also https://www.esp32.com/viewtopic.php?t=2462
-
-// TODO: use wifi_status_led_uninstall() to disable status led
-
-// TODO: use system_get_rtc_time() after deep sleep to get a time reference
-// when using deep sleep?
-
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
-WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
-*/
 
 #if defined(ESP8266)
 #include <FS.h>                     // must be first
@@ -906,7 +906,6 @@ void switchSensors(bool on, bool force)
 }
 
 void deepSleep(uint32_t us, bool switchOnWiFiOnRestart) {
-#if defined(POWERSAVE)
 	wdt_disable();
 	WiFi.disconnect(true);
 	WiFi.mode(WIFI_OFF);
@@ -923,7 +922,6 @@ void deepSleep(uint32_t us, bool switchOnWiFiOnRestart) {
 	//   https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
 	//   https://blog.creations.de/?p=149
 	ESP.deepSleep(us, switchOnWiFiOnRestart ? RF_DEFAULT : RF_DISABLED);
-#endif
 }
 
 extern "C" void loop_StateMeasureAndSend() {
@@ -1210,8 +1208,8 @@ extern "C" void loop_StateSensorWarmup() {
 	switchSensors(true, true);
 	rtcData.stateMachine = 2;
 	//deepSleep((WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000);
-	//deepSleep((WARMUPTIME_SDS_MS) * 1000);
-	deepSleep((7000) * 1000); // TODO: this small value seems to work but how about accuracy?
+	deepSleep((WARMUPTIME_SDS_MS) * 1000); // this values has been 
+	//deepSleep((7000) * 1000); // TODO: this small value seems to work but how about accuracy?
 }
 
 extern "C" void loop_StartupTemporaryWebServer() {
