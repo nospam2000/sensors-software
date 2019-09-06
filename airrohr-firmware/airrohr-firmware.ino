@@ -83,9 +83,9 @@
  *  Powersave mode                                                      *
  *
  *    TODO:
- *     - implement state machine
+ *     - testing, clean up debug messages and log levels
  *     - remove dependencies of sensor reading functions to global data
- *       (which will be cleared by deepSleep)
+ *       (which will be cleared by deepSleep): starttime, act_milli
  *
  * State Machine
  *   - current step stored in RTC memory
@@ -97,14 +97,14 @@
  *       nextStep=100 (normal mode)
  *     deepSleep(1, RF_DEFAULT)
  *
- *   step 1: // WiFi off
+ *   state 1: Sensor Warmup // WiFi off, 
  *     if(checkPowerSafeDisabledJumper())
  *       goto nextStep=100 (normal mode)
  *     start sensors
  *     nextStep=2
  *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS, RF_DEFAULT)
  *
- *   step 2: // requires WiFi
+ *   state 2: Read sensors and send data // requires WiFi
  *     if(checkPowerSafeDisabledJumper())
  *       goto nextStep=100 (normal mode)
  *     read sensors
@@ -115,10 +115,10 @@
  *     nextStep=1
  *     deepSleep(cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS), RF_DISABLED)
  *
- *   step 100: // requires WiFi
+ *   state 100: Normal mode // requires WiFi
  *     normal mode (for unlimited time)
  *
- *   step 101: // requires WiFi
+ *   state 101: Temporary normal mode // requires WiFi
  *     normal mode for 5 to 10 minutes // make it possible to access the web interface
  *     if(checkPowerSafeDisabledJumper())
  *       goto nextStep=100 (normal mode)
@@ -448,7 +448,7 @@ String Float2String(const double value, uint8_t digits);
 void writeConfig();
 String add_sensor_type(const String& sensor_text);
 void webserver_not_found();
-void deepSleep(uint32_t us, bool switchOffSensors = true, bool switchOffWiFiOnRestart = false);
+void deepSleep(uint32_t us, bool switchOnWiFiOnRestart = true);
 static bool acquireNetworkTime();
 static void autoUpdate();
 static void powerOnTestSensors(bool dontInitPmSensors);
@@ -830,7 +830,7 @@ private:
 	// when adding new members, set the initial values here
 	// this is also used when the RTC didn't contain a valid crc
 	void initValues() {
-		stateMachine = 1; // TODO: for testing this is 1, normally it should be 0
+		stateMachine = 101;
 	}
 
 public:
@@ -848,20 +848,6 @@ public:
 			if(!checkCRC()) {
 				initValues();
 				debug_outln(FPSTR("Saved RTC data invalid"), DEBUG_MIN_INFO);
-
-				// TODO: remove dump code
-				char buf[3];
-				uint8_t *ptr = (uint8_t *)this;
-				for (size_t i = 0; i < rtcLen; i++) {
-					sprintf(buf, "%02X", ptr[i]);
-					Serial.print(buf);
-					if ((i + 1) % 32 == 0) {
-					Serial.println();
-					} else {
-					Serial.print(" ");
-					}
-				}
-				Serial.println();
 			}
 		}		
 	}
@@ -910,37 +896,33 @@ RTCData rtcData;
 void switchSensors(bool on, bool force)
 {
 	if (cfg::sds_read && (force || is_SDS_running != on))
-		is_SDS_running = SDS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+		SDS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
 
 	if (cfg::pms_read && (force || is_PMS_running != on))
-		is_PMS_running = PMS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+		PMS_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
 
 	if (cfg::hpm_read && (force || is_HPM_running != on))
-		is_HPM_running = HPM_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
+		HPM_cmd(on ? PmSensorCmd::Start : PmSensorCmd::Stop);
 }
 
-void deepSleep(uint32_t us, bool switchOffSensors, bool switchOffWiFiOnRestart) {
+void deepSleep(uint32_t us, bool switchOnWiFiOnRestart) {
 #if defined(POWERSAVE)
-	// Setting any global variables in this function would only makes sense when
-	// ESP.deepSleep() would not completely reset the CPU. Nevertheless for
-	// the sake of code readability those variables are set.
-	if(switchOffSensors)
-	{
-		switchSensors(false, true);
-	}
-
 	wdt_disable();
 	WiFi.disconnect(true);
 	WiFi.mode(WIFI_OFF);
+
+	// Setting any global variables in this function would only makes sense when
+	// ESP.deepSleep() would not completely reset the CPU. Nevertheless for
+	// the sake of code readability those variables are set here:
 	//networkInitialized = false;
 	//got_ntp = false;
+
 	rtcData.save();
 
 	// for issues with sleep mode RF_DISABLED refer to these links:
 	//   https://github.com/esp8266/Arduino/issues/3072#issuecomment-348692479
 	//   https://blog.creations.de/?p=149
-	ESP.deepSleep(us, switchOffWiFiOnRestart ? RF_DISABLED : RF_DEFAULT);
-	//yield(); // Needed at least for WiFi.forceSleepBegin()
+	ESP.deepSleep(us, switchOnWiFiOnRestart ? RF_DEFAULT : RF_DISABLED);
 #endif
 }
 
@@ -966,6 +948,12 @@ extern "C" void loop_StateMeasureAndSend() {
 #endif
 
 	debug_outln(FPSTR("loop_StateMeasureAndSend"), DEBUG_MIN_INFO);
+
+	// the PM sensors have been initialized in the previous states of the state machine
+	powerOnTestSensors(false);
+	is_SDS_running = cfg::sds_read;
+	is_PMS_running = cfg::pms_read;
+	is_HPM_running = cfg::hpm_read;
 
 	if (cfg::sps30_read && ( !sps30_init_failed)) {
 		//if ((msSince(starttime) - SPS30_read_timer) > SPS30_WAITING_AFTER_LAST_READ)
@@ -1020,7 +1008,7 @@ extern "C" void loop_StateMeasureAndSend() {
 			starttime_SDS = act_milli;
 		}
 	}
-	switchSensors(false, false); // turn off the sensors as early as possible
+	switchSensors(false, false); // turn sensors off as early as possible
 
 	if (send_now) {
 		if (cfg::dht_read) {
@@ -1206,11 +1194,10 @@ extern "C" void loop_StateMeasureAndSend() {
 	}
 
 	rtcData.stateMachine = 1;
-	deepSleep(cfg::sending_intervall_ms * 1000, true, true);
+	deepSleep(cfg::sending_intervall_ms * 1000, false);
 }
 
 extern "C" void loop_StateSensorWarmup() {
-	// TODO: make sure the setup() doesn't do any reset of the sensor after the wakeup
 #if defined(ESP8266)
 	wdt_reset(); // nodemcu is alive
 #endif
@@ -1222,15 +1209,23 @@ extern "C" void loop_StateSensorWarmup() {
 	//act_milli = starttime + (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) + 1;
 	switchSensors(true, true);
 	rtcData.stateMachine = 2;
-	//deepSleep((WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000, false, false);
-	//deepSleep((WARMUPTIME_SDS_MS) * 1000, false, false);
-	deepSleep((5000) * 1000, false, false);
+	//deepSleep((WARMUPTIME_SDS_MS + READINGTIME_SDS_MS) * 1000);
+	//deepSleep((WARMUPTIME_SDS_MS) * 1000);
+	deepSleep((7000) * 1000); // TODO: this small value seems to work but how about accuracy?
+}
+
+extern "C" void loop_StartupTemporaryWebServer() {
+#if defined(ESP8266)
+	wdt_reset(); // nodemcu is alive
+#endif
+
+	debug_outln(FPSTR("loop_StartupTemporaryWebServer"), DEBUG_MIN_INFO);
 }
 
 /*****************************************************************
  * send SDS011 command (start, stop, continuous mode, version    *
  *****************************************************************/
-static bool SDS_cmd(PmSensorCmd cmd) {
+static void SDS_cmd(PmSensorCmd cmd) {
 	static constexpr uint8_t start_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x06, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x06, 0xAB
 	};
@@ -1260,9 +1255,11 @@ static bool SDS_cmd(PmSensorCmd cmd) {
 	switch (cmd) {
 	case PmSensorCmd::Start:
 		memcpy_P(buf, start_cmd, cmd_len);
+		is_SDS_running = true;
 		break;
 	case PmSensorCmd::Stop:
 		memcpy_P(buf, stop_cmd, cmd_len);
+		is_SDS_running = false;
 		break;
 	case PmSensorCmd::ContinuousMode:
 		memcpy_P(buf, continuous_mode_cmd, cmd_len);
@@ -1275,13 +1272,12 @@ static bool SDS_cmd(PmSensorCmd cmd) {
 		break;
 	}
 	serialSDS.write(buf, cmd_len);
-	return cmd != PmSensorCmd::Stop;
 }
 
 /*****************************************************************
  * send Plantower PMS sensor command start, stop, cont. mode     *
  *****************************************************************/
-static bool PMS_cmd(PmSensorCmd cmd) {
+static void PMS_cmd(PmSensorCmd cmd) {
 	static constexpr uint8_t start_cmd[] PROGMEM = {
 		0x42, 0x4D, 0xE4, 0x00, 0x01, 0x01, 0x74
 	};
@@ -1297,9 +1293,11 @@ static bool PMS_cmd(PmSensorCmd cmd) {
 	switch (cmd) {
 	case PmSensorCmd::Start:
 		memcpy_P(buf, start_cmd, cmd_len);
+		is_PMS_running = true;
 		break;
 	case PmSensorCmd::Stop:
 		memcpy_P(buf, stop_cmd, cmd_len);
+		is_PMS_running = false;
 		break;
 	case PmSensorCmd::ContinuousMode:
 		memcpy_P(buf, continuous_mode_cmd, cmd_len);
@@ -1310,13 +1308,12 @@ static bool PMS_cmd(PmSensorCmd cmd) {
 		break;
 	}
 	serialSDS.write(buf, cmd_len);
-	return cmd != PmSensorCmd::Stop;
 }
 
 /*****************************************************************
  * send Honeywell PMS sensor command start, stop, cont. mode     *
  *****************************************************************/
-static bool HPM_cmd(PmSensorCmd cmd) {
+static void HPM_cmd(PmSensorCmd cmd) {
 	static constexpr uint8_t start_cmd[] PROGMEM = {
 		0x68, 0x01, 0x01, 0x96
 	};
@@ -1332,9 +1329,11 @@ static bool HPM_cmd(PmSensorCmd cmd) {
 	switch (cmd) {
 	case PmSensorCmd::Start:
 		memcpy_P(buf, start_cmd, cmd_len);
+		is_HPM_running = true;
 		break;
 	case PmSensorCmd::Stop:
 		memcpy_P(buf, stop_cmd, cmd_len);
+		is_HPM_running = false;
 		break;
 	case PmSensorCmd::ContinuousMode:
 		memcpy_P(buf, continuous_mode_cmd, cmd_len);
@@ -1345,7 +1344,6 @@ static bool HPM_cmd(PmSensorCmd cmd) {
 		break;
 	}
 	serialSDS.write(buf, cmd_len);
-	return cmd != PmSensorCmd::Stop;
 }
 
 /*****************************************************************
@@ -1361,11 +1359,11 @@ String SDS_version_date() {
 
 	debug_outln(String(FPSTR(DBG_TXT_END_READING)) + FPSTR(DBG_TXT_SDS011_VERSION_DATE), DEBUG_MED_INFO);
 
-	is_SDS_running = SDS_cmd(PmSensorCmd::Start);
+	SDS_cmd(PmSensorCmd::Start);
 
 	delay(100);
 
-	is_SDS_running = SDS_cmd(PmSensorCmd::VersionDate);
+	SDS_cmd(PmSensorCmd::VersionDate);
 
 	delay(500);
 
@@ -2932,10 +2930,6 @@ void connectWifi() {
 		if (WiFi.status() != WL_CONNECTED) {
 			waitForWifiToConnect(20);
 			debug_outln("", DEBUG_MIN_INFO);
-
-			if (WiFi.status() != WL_CONNECTED) {
-				deepSleep(60*1000*1000); // TODO use higher value and different strategy
-			}
 		}
 	}
 	debug_out(F("WiFi connected\nIP address: "), DEBUG_MIN_INFO);
@@ -2956,11 +2950,15 @@ void setup_network() {
 	}
 	autoUpdate();
 
+#if 0
+	// TODO: MDNS.begin crashes 
 	String server_name = F("airRohr-");
 	server_name += esp_chipid;
 	if (MDNS.begin(server_name.c_str())) {
 		MDNS.addService("http", "tcp", 80);
 	}
+	debug_outln(FPSTR("after MDNS.addService"), DEBUG_MIN_INFO); // TODO: remove
+#endif
 
 	networkInitialized = true;
 }
@@ -2973,6 +2971,7 @@ unsigned long sendData(const String& data, const int pin, const char* host, cons
 
 	setup_network();
 	unsigned long start_send = millis();
+
 	debug_out(F("Start connecting to "), DEBUG_MIN_INFO);
 	debug_out(host, DEBUG_MIN_INFO);
 	debug_out(F(":"), DEBUG_MIN_INFO);
@@ -3400,11 +3399,11 @@ static String sensorSDS() {
 	debug_outln(String(FPSTR(DBG_TXT_START_READING)) + FPSTR(SENSORS_SDS011), DEBUG_MED_INFO);
 	if (msSince(starttime) < (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
 		if (is_SDS_running) {
-			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
+			SDS_cmd(PmSensorCmd::Stop);
 		}
 	} else {
 		if (! is_SDS_running) {
-			is_SDS_running = SDS_cmd(PmSensorCmd::Start);
+			SDS_cmd(PmSensorCmd::Start);
 		}
 		SDS_cmd(PmSensorCmd::QueryData);
 		delay((10 + 2) * (1+8+1) * 1000 / 9600); // 10 characters at 9600 bps (8N1) + 20% extra
@@ -3514,7 +3513,7 @@ static String sensorSDS() {
 		sds_pm25_max = 0;
 		sds_pm25_min = 20000;
 		if ((cfg::sending_intervall_ms > (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
-			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
+			SDS_cmd(PmSensorCmd::Stop);
 		}
 	}
 
@@ -3542,11 +3541,11 @@ static String sensorPMS() {
 	debug_outln(String(FPSTR(DBG_TXT_START_READING)) + FPSTR(SENSORS_PMSx003), DEBUG_MED_INFO);
 	if (msSince(starttime) < (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
 		if (is_PMS_running) {
-			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
+			PMS_cmd(PmSensorCmd::Stop);
 		}
 	} else {
 		if (! is_PMS_running) {
-			is_PMS_running = PMS_cmd(PmSensorCmd::Start);
+			PMS_cmd(PmSensorCmd::Start);
 		}
 
 		while (serialSDS.available() > 0) {
@@ -3694,7 +3693,7 @@ static String sensorPMS() {
 		pms_pm25_max = 0;
 		pms_pm25_min = 20000;
 		if (cfg::sending_intervall_ms > (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS)) {
-			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
+			PMS_cmd(PmSensorCmd::Stop);
 		}
 	}
 
@@ -3720,11 +3719,11 @@ static String sensorHPM() {
 	debug_outln(String(FPSTR(DBG_TXT_START_READING)) + FPSTR(SENSORS_HPM), DEBUG_MED_INFO);
 	if (msSince(starttime) < (cfg::sending_intervall_ms - (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS))) {
 		if (is_HPM_running) {
-			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+			HPM_cmd(PmSensorCmd::Stop);
 		}
 	} else {
 		if (! is_HPM_running) {
-			is_HPM_running = HPM_cmd(PmSensorCmd::Start);
+			HPM_cmd(PmSensorCmd::Start);
 		}
 
 		while (serialSDS.available() > 0) {
@@ -3835,7 +3834,7 @@ static String sensorHPM() {
 		hpm_pm25_max = 0;
 		hpm_pm25_min = 20000;
 		if (cfg::sending_intervall_ms > (WARMUPTIME_SDS_MS + READINGTIME_SDS_MS)) {
-			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+			HPM_cmd(PmSensorCmd::Stop);
 		}
 	}
 
@@ -4596,7 +4595,7 @@ bool initDNMS() {
 	}
 }
 
-static void powerOnTestSensors(bool dontInitPmSensors) {
+static void powerOnTestSensors(bool initPmSensors) {
 	if (cfg::ppd_read) {
 		pinMode(PPD_PIN_PM1, INPUT_PULLUP);					// Listen at the designated PIN
 		pinMode(PPD_PIN_PM2, INPUT_PULLUP);					// Listen at the designated PIN
@@ -4605,44 +4604,44 @@ static void powerOnTestSensors(bool dontInitPmSensors) {
 
 	if (cfg::sds_read) {
 		debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
 			SDS_cmd(PmSensorCmd::Start);
 			delay(100);
 		}
 		SDS_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			debug_outln(F("Stopping SDS011..."), DEBUG_MIN_INFO);
-			is_SDS_running = SDS_cmd(PmSensorCmd::Stop);
+			SDS_cmd(PmSensorCmd::Stop);
 		}
 	}
 
 	if (cfg::pms_read) {
 		debug_outln(F("Read PMS(1,3,5,6,7)003..."), DEBUG_MIN_INFO);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			PMS_cmd(PmSensorCmd::Start);
 			delay(100);
 		}
 		PMS_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			debug_outln(F("Stopping PMS..."), DEBUG_MIN_INFO);
-			is_PMS_running = PMS_cmd(PmSensorCmd::Stop);
+			PMS_cmd(PmSensorCmd::Stop);
 		}
 	}
 
 	if (cfg::hpm_read) {
 		debug_outln(F("Read HPM..."), DEBUG_MIN_INFO);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			HPM_cmd(PmSensorCmd::Start);
 			delay(100);
 		}
 		HPM_cmd(PmSensorCmd::ContinuousMode);
 		delay(100);
-		if (!dontInitPmSensors) {
+		if (initPmSensors) {
 			debug_outln(F("Stopping HPM..."), DEBUG_MIN_INFO);
-			is_HPM_running = HPM_cmd(PmSensorCmd::Stop);
+			HPM_cmd(PmSensorCmd::Stop);
 		}
 	}
 
@@ -4700,6 +4699,7 @@ static void powerOnTestSensors(bool dontInitPmSensors) {
 			dnms_init_failed = 1;
 		}
 	}
+
 }
 
 static void logEnabledAPIs() {
@@ -4895,25 +4895,15 @@ extern "C" void setup() {
 	cfg::initNonTrivials(esp_chipid.c_str());
 	readConfig();
 
-	// for the powersave states, these initializations are not good
 	if(rtcData.stateMachine == 0 || rtcData.stateMachine >= 100)
 	{
+		// for the powersave states, these initializations are not good
 		init_display();
 		init_lcd();
+		setup_network();
 		setup_webserver();
-
 		create_basic_auth_strings();
-
-		powerOnTestSensors(false);
-	}
-	else
-	{
 		powerOnTestSensors(true);
-
-		// those have been initialized in the previous
-		is_SDS_running = cfg::sds_read;
-		is_PMS_running = cfg::pms_read;
-		is_HPM_running = cfg::hpm_read;
 	}
 
 	if (cfg::gps_read) {
@@ -4925,8 +4915,6 @@ extern "C" void setup() {
 	logEnabledAPIs();
 	logEnabledDisplays();
 
-	//setup_network();
-
 	delay(50);
 
 	// sometimes parallel sending data and web page will stop nodemcu, watchdogtimer set to 30 seconds
@@ -4937,11 +4925,15 @@ extern "C" void setup() {
 
 	switch(rtcData.stateMachine) {
 		case 1:
-			loop_StateSensorWarmup();
+			loop_StateSensorWarmup(); // will never return
 			break;
 
 		case 2:
-			loop_StateMeasureAndSend();
+			loop_StateMeasureAndSend(); // will never return
+			break;
+
+		case 101:
+			loop_StartupTemporaryWebServer();
 			break;
 
 		default:
@@ -4970,6 +4962,14 @@ extern "C" void loop() {
 #if defined(ESP8266)
 	wdt_reset(); // nodemcu is alive
 #endif
+
+	if(rtcData.stateMachine == 101
+		&& (msSince(time_point_device_start_ms) > (3*60*1000))) // TODO: add constant
+	{
+		debug_outln(F("Switching to powersave mode"), DEBUG_MIN_INFO);
+		rtcData.stateMachine = 1;
+		deepSleep(1000, true);
+	}
 
 	if (last_micro != 0) {
 		unsigned long diff_micro = act_micro - last_micro;
@@ -5224,8 +5224,6 @@ extern "C" void loop() {
 		sending_time = (4 * sending_time + sum_send_time) / 5;
 		debug_out(F("Time for sending data (ms): "), DEBUG_MIN_INFO);
 		debug_outln(String(sending_time), DEBUG_MIN_INFO);
-
-		deepSleep(cfg::sending_intervall_ms * 1000);
 
 		// reconnect to WiFi if disconnected
 		if (WiFi.status() != WL_CONNECTED) {
