@@ -87,6 +87,7 @@
  *     - fix problem in normal mode (activating the SDS sensor fan fails in current version)
  *     - testing
  *     - add a switch to disable powersafe mode in the WebUI
+ *     - reduce the number of update checks to once a day (move counter to rtcMemory)
  *     - modularize loop() and reuse the code
  *     - fix mDNS crash or remove mDNS (see https://github.com/esp8266/Arduino/issues/4417)
  *     - clean up debug messages and log levels
@@ -101,6 +102,7 @@
  *     - use wifi_status_led_uninstall() to disable status led?
  *     - use system_get_rtc_time() after deep sleep to get a time reference
  *       when using deep sleep?
+ *     - use sntp only every several hours
  *
  * State Machine
  *   - current step stored in RTC memory
@@ -110,18 +112,20 @@
  *       nextStep=101 temporary normal mode, then powersave mode
  *     else
  *       nextStep=100 (normal mode)
- *     deepSleep(1, RF_DEFAULT)
+ *     deepSleep(1000, RF_DEFAULT)
  *
  *   state 1: Sensor Warmup // WiFi off, 
  *     if(checkPowerSafeDisabledJumper())
- *       goto nextStep=100 (normal mode)
+ *       nextStep=100 (normal mode)
+ *       deepSleep(1000, RF_DEFAULT)
  *     start sensors
  *     nextStep=2
  *     deepSleep(WARMUPTIME_SDS_MS + READINGTIME_SDS_MS, RF_DEFAULT)
  *
  *   state 2: Read sensors and send data // requires WiFi
  *     if(checkPowerSafeDisabledJumper())
- *       goto nextStep=100 (normal mode)
+ *       nextStep=100 (normal mode)
+ *       deepSleep(1000, RF_DEFAULT)
  *     read sensors
  *     stop sensors
  *     activate WiFi
@@ -136,10 +140,11 @@
  *   state 101: Temporary normal mode // requires WiFi
  *     normal mode for 5 to 10 minutes // make it possible to access the web interface
  *     if(checkPowerSafeDisabledJumper())
- *       goto nextStep=100 (normal mode)
- *     after 5 minutes     
+ *       nextStep=100 (normal mode)
+ *       deepSleep(1000, RF_DEFAULT)
+ *     after 5 minutes
  *       nextStep=1
- *       deepSleep(1, RF_DEFAULT)
+ *       deepSleep(1000, RF_DEFAULT)
  ************************************************************************
  *                                                                      *
  * Please check Readme.md for other sensors and hardware                *
