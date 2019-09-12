@@ -80,8 +80,13 @@
  *                                                                      *
  ************************************************************************
  *                                                                      *
- *  Powersave mode                                                      *
- *
+ *  Powersave mode                              
+ * 
+ *    Notes
+ *     -The +5V power must come from a different source because the Vu
+ *      pin only provides +5V when powered via USB
+ * 
+ * 
  *    TODO:
  *     - do measurements
  *     - fix problem in normal mode (activating the SDS sensor fan fails in current version)
@@ -425,7 +430,9 @@ enum class PmSensorCmd {
 	Stop,
 	ContinuousMode,
 	VersionDate,
-	QueryData
+	QueryData,
+	DataReportingModeActive,
+	DataReportingModeQuery
 };
 
 String basic_auth_influx;
@@ -1241,14 +1248,12 @@ static void SDS_cmd(PmSensorCmd cmd) {
 	static constexpr uint8_t version_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x05, 0xAB
 	};
-	/*
 	static constexpr uint8_t data_reporting_set_active_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0xAB
 	};
 	static constexpr uint8_t data_reporting_set_query_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x02, 0xAB
 	};
-	*/
 	static constexpr uint8_t query_data_cmd[] PROGMEM = {
 		0xAA, 0xB4, 0x04, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x02, 0xAB
 	};
@@ -1272,6 +1277,12 @@ static void SDS_cmd(PmSensorCmd cmd) {
 		break;
 	case PmSensorCmd::QueryData:
 		memcpy_P(buf, query_data_cmd, cmd_len);
+		break;
+	case PmSensorCmd::DataReportingModeActive:
+		memcpy_P(buf, data_reporting_set_active_cmd, cmd_len);
+		break;
+	case PmSensorCmd::DataReportingModeQuery:
+		memcpy_P(buf, data_reporting_set_query_cmd, cmd_len);
 		break;
 	}
 	serialSDS.write(buf, cmd_len);
@@ -1307,6 +1318,8 @@ static void PMS_cmd(PmSensorCmd cmd) {
 		break;
 	case PmSensorCmd::VersionDate:
 	case PmSensorCmd::QueryData:
+	case PmSensorCmd::DataReportingModeActive:
+	case PmSensorCmd::DataReportingModeQuery:
 		assert(false && "not supported by this sensor");
 		break;
 	}
@@ -1343,6 +1356,8 @@ static void HPM_cmd(PmSensorCmd cmd) {
 		break;
 	case PmSensorCmd::VersionDate:
 	case PmSensorCmd::QueryData:
+	case PmSensorCmd::DataReportingModeActive:
+	case PmSensorCmd::DataReportingModeQuery:
 		assert(false && "not supported by this sensor");
 		break;
 	}
@@ -4609,6 +4624,9 @@ static void powerOnTestSensors(bool initPmSensors) {
 		debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
 		if (initPmSensors) {
 			debug_outln(F("Read SDS..."), DEBUG_MIN_INFO);
+			SDS_cmd(PmSensorCmd::DataReportingModeQuery); // now using query command in SensorSDS()
+			//SDS_cmd(PmSensorCmd::DataReportingModeActive);
+			delay(100);
 			SDS_cmd(PmSensorCmd::Start);
 			delay(100);
 		}
